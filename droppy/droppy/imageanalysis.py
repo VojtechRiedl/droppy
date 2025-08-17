@@ -1,6 +1,5 @@
-from skimage.viewer import ImageViewer
-from skimage.viewer.canvastools import RectangleTool
 from skimage.transform import hough_circle, hough_circle_peaks, hough_line, hough_line_peaks
+from skimage.transform import resize
 
 
 import matplotlib.pyplot as plt
@@ -12,29 +11,70 @@ import warnings
 from droppy.common import L, R, T, B
 from droppy.edgedetection import extract_edges
 
+from matplotlib.widgets import RectangleSelector
+
 def get_crop(image):
-    '''
-    Show the original image to allow the user to crop any extraneous
-    information out of the frame.
+    """
+    Zobrazí obrázek a nechá uživatele vybrat ořez (myší). Potvrzení Enterem.
 
-    :param image: 2D numpy array grayscale image
-    :return: list of [left, right, top, bottom] values for the edges of the
-             bounding box
-    '''
+    :param image: 2D numpy array (grayscale)
+    :return: np.array([left, right, top, bottom], dtype=int)
+    """
     plt.ioff()
-    print('Waiting for input, please crop the image as desired and hit enter')
-    viewer = ImageViewer(image)
-    rect_tool = RectangleTool(viewer, on_enter=viewer.closeEvent)
-    viewer.show()
+    print("Waiting for input, please crop the image as desired and hit enter")
 
-    bounds = np.array(rect_tool.extents)
-    if (bounds[0] < 0 or bounds[1] > image.shape[1] or bounds[2] < 0
-            or bounds[3] > image.shape[0]):
-        print(f'Bounds = {bounds} and shape = {image.shape}')
-        raise ValueError('Bounds outside image, make sure to select within')
+    fig, ax = plt.subplots()
+    ax.imshow(image, cmap="gray")
+    ax.set_title("Drag to select crop. Press Enter to confirm.")
+
+    # sem si uložíme extenty z výběru
+    state = {"extents": None}
+
+    def onselect(eclick, erelease):
+        # převod na (left, right, top, bottom) s ošetřením směru tažení
+        x1, y1 = eclick.xdata, eclick.ydata
+        x2, y2 = erelease.xdata, erelease.ydata
+        if None in (x1, y1, x2, y2):
+            return
+        left, right = sorted([x1, x2])
+        top, bottom = sorted([y1, y2])
+        state["extents"] = (left, right, top, bottom)
+
+    # nástroj obdélníkového výběru (LMB), interaktivní rohy
+    rs = RectangleSelector(
+        ax, onselect,
+        useblit=True, button=[1],  # levé tlačítko
+        interactive=True, minspanx=2, minspany=2,
+        drag_from_anywhere=False
+    )
+
+    def on_key(event):
+        if event.key in ("enter", "return"):
+            plt.close(fig)
+
+    fig.canvas.mpl_connect("key_press_event", on_key)
+
+    # blokující smyčka, dokud uživatel nepotvrdí Enterem
+    fig.show()
+    while plt.fignum_exists(fig.number):
+        plt.pause(0.05)
+
+    bounds = state["extents"]
+    if bounds is None:
+        plt.ion()
+        raise RuntimeError("No crop selected. Draw a rectangle and press Enter.")
+
+    # validace rozsahu
+    h, w = image.shape[:2]
+    left, right, top, bottom = bounds
+    if (left < 0 or right > w or top < 0 or bottom > h):
+        print(f"Bounds = {bounds} and shape = {image.shape}")
+        plt.ion()
+        raise ValueError("Bounds outside image, make sure to select within")
 
     plt.ion()
-    return np.array(np.round(bounds), dtype=int)
+    return np.array(np.round([left, right, top, bottom]), dtype=int)
+
 
 def auto_crop(image, pad=25, σ=1, low=None, high=None):
     '''
